@@ -1,0 +1,752 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  Users, Package, FileText, Plus, Search, 
+  Trash2, CheckCircle, XCircle, Download, 
+  Home, DollarSign, Calendar, MapPin, Phone 
+} from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  signInWithCustomToken,
+  onAuthStateChanged 
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  collection, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  doc, 
+  onSnapshot, 
+  query, 
+  orderBy, 
+  serverTimestamp 
+} from 'firebase/firestore';
+
+// --- CONFIGURACIÓN E INICIALIZACIÓN DE FIREBASE ---
+// Se utilizan las variables globales del entorno para la configuración
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+// --- UTILIDADES ---
+
+// Función para cargar librerías externas (jsPDF) dinámicamente
+const loadScript = (src) => {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) {
+      resolve();
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = src;
+    script.onload = resolve;
+    script.onerror = reject;
+    document.head.appendChild(script);
+  });
+};
+
+const formatCurrency = (amount) => {
+  return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(amount);
+};
+
+const formatDate = (dateObj) => {
+  if (!dateObj) return '';
+  // Manejo de timestamp de Firestore o fecha JS
+  const date = dateObj.toDate ? dateObj.toDate() : new Date(dateObj);
+  return new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+};
+
+// --- COMPONENTES ---
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [view, setView] = useState('dashboard'); // dashboard, clients, new-order, history
+  const [loading, setLoading] = useState(true);
+  const [pdfReady, setPdfReady] = useState(false);
+
+  // Datos
+  const [clients, setClients] = useState([]);
+  const [orders, setOrders] = useState([]);
+
+  // Estados de formularios
+  const [newClient, setNewClient] = useState({ name: '', phone: '', address: '', email: '' });
+  const [currentOrder, setCurrentOrder] = useState({
+    clientId: '',
+    items: [{ id: 1, desc: '', qty: 1, price: 0 }],
+    status: 'pendiente', // pendiente, pagado
+    date: new Date().toISOString().split('T')[0] // Fecha por defecto hoy
+  });
+  
+  // Estado para notificaciones simples
+  const [notification, setNotification] = useState(null);
+
+  // 1. Autenticación (MANDATORY PATTERN)
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("Error de autenticación:", error);
+      }
+    };
+
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 2. Cargar Scripts de PDF
+  useEffect(() => {
+    const loadPdfLibs = async () => {
+      try {
+        await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
+        await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js");
+        setPdfReady(true);
+      } catch (e) {
+        console.error("Error cargando librerías PDF", e);
+      }
+    };
+    loadPdfLibs();
+  }, []);
+
+  // 3. Data Fetching (Firestore)
+  useEffect(() => {
+    if (!user) return;
+
+    // Referencias a colecciones privadas del usuario
+    const clientsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'clients');
+    const ordersRef = collection(db, 'artifacts', appId, 'users', user.uid, 'orders');
+    
+    // Querys simples (sin orderBy complejo para evitar errores de índice)
+    const qClients = query(clientsRef);
+    const qOrders = query(ordersRef);
+
+    const unsubClients = onSnapshot(qClients, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // Ordenar en memoria
+      data.sort((a, b) => a.name.localeCompare(b.name));
+      setClients(data);
+    }, (err) => console.error("Error clients:", err));
+
+    const unsubOrders = onSnapshot(qOrders, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // Ordenar en memoria por fecha descendente
+      data.sort((a, b) => {
+        const dateA = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt);
+        const dateB = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt);
+        return dateB - dateA;
+      });
+      setOrders(data);
+    }, (err) => console.error("Error orders:", err));
+
+    return () => {
+      unsubClients();
+      unsubOrders();
+    };
+  }, [user]);
+
+  // --- LÓGICA DE NEGOCIO ---
+
+  const showNotification = (msg) => {
+    setNotification(msg);
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  const handleAddClient = async (e) => {
+    e.preventDefault();
+    if (!user || !newClient.name) return;
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'clients'), {
+        ...newClient,
+        createdAt: serverTimestamp()
+      });
+      setNewClient({ name: '', phone: '', address: '', email: '' });
+      showNotification("Cliente registrado con éxito");
+    } catch (err) {
+      console.error(err);
+      showNotification("Error al guardar cliente");
+    }
+  };
+
+  const handleDeleteClient = async (id) => {
+    if(!window.confirm("¿Borrar cliente? Se mantendrá su historial pero perderás el contacto.")) return;
+    try {
+      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'clients', id));
+      showNotification("Cliente eliminado");
+    } catch (err) { console.error(err); }
+  };
+
+  // Gestión de filas de productos en la orden
+  const updateOrderItem = (index, field, value) => {
+    const newItems = [...currentOrder.items];
+    newItems[index][field] = value;
+    setCurrentOrder({ ...currentOrder, items: newItems });
+  };
+
+  const addOrderItem = () => {
+    setCurrentOrder({
+      ...currentOrder,
+      items: [...currentOrder.items, { id: Date.now(), desc: '', qty: 1, price: 0 }]
+    });
+  };
+
+  const removeOrderItem = (index) => {
+    if (currentOrder.items.length === 1) return;
+    const newItems = currentOrder.items.filter((_, i) => i !== index);
+    setCurrentOrder({ ...currentOrder, items: newItems });
+  };
+
+  const calculateTotal = (items) => {
+    return items.reduce((acc, item) => acc + (item.qty * item.price), 0);
+  };
+
+  const handleSaveOrder = async (e) => {
+    e.preventDefault();
+    if (!user || !currentOrder.clientId) {
+      showNotification("Selecciona un cliente");
+      return;
+    }
+    
+    // Verificar que haya productos
+    const validItems = currentOrder.items.filter(i => i.desc.trim() !== '');
+    if (validItems.length === 0) {
+      showNotification("Agrega al menos un producto");
+      return;
+    }
+
+    try {
+      const total = calculateTotal(validItems);
+      const client = clients.find(c => c.id === currentOrder.clientId);
+
+      await addDoc(collection(db, 'artifacts', appId, 'users', user.uid, 'orders'), {
+        clientId: currentOrder.clientId,
+        clientName: client ? client.name : 'Desconocido',
+        items: validItems,
+        total: total,
+        status: currentOrder.status,
+        dateString: currentOrder.date,
+        createdAt: serverTimestamp() // Importante para ordenar
+      });
+
+      // Reset
+      setCurrentOrder({
+        clientId: '',
+        items: [{ id: Date.now(), desc: '', qty: 1, price: 0 }],
+        status: 'pendiente',
+        date: new Date().toISOString().split('T')[0]
+      });
+      setView('history');
+      showNotification("Pedido registrado correctamente");
+    } catch (err) {
+      console.error(err);
+      showNotification("Error al guardar pedido");
+    }
+  };
+
+  const toggleOrderStatus = async (order) => {
+    try {
+      const newStatus = order.status === 'pendiente' ? 'pagado' : 'pendiente';
+      await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'orders', order.id), {
+        status: newStatus
+      });
+      showNotification(`Pedido marcado como ${newStatus}`);
+    } catch (err) { console.error(err); }
+  };
+
+  const deleteOrder = async (id) => {
+    if(!confirm("¿Eliminar este registro de venta?")) return;
+    try {
+      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'orders', id));
+    } catch (err) { console.error(err); }
+  };
+
+  // --- GENERACIÓN DE PDF ---
+  const generatePDF = (order) => {
+    if (!pdfReady || !window.jspdf) {
+      showNotification("El sistema de PDF aún está cargando...");
+      return;
+    }
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    const client = clients.find(c => c.id === order.clientId) || { name: order.clientName, address: '', phone: '' };
+
+    // Encabezado
+    doc.setFontSize(20);
+    doc.setTextColor(40);
+    doc.text("NOTA DE VENTA", 14, 22);
+
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Fecha: ${order.dateString}`, 14, 30);
+    doc.text(`ID: ${order.id.slice(0, 8).toUpperCase()}`, 14, 35);
+
+    // Datos Cliente
+    doc.setFontSize(12);
+    doc.setTextColor(0);
+    doc.text(`Cliente: ${client.name}`, 14, 45);
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Dirección: ${client.address || 'N/A'}`, 14, 50);
+    doc.text(`Teléfono: ${client.phone || 'N/A'}`, 14, 55);
+
+    // Estado
+    doc.setFontSize(12);
+    if (order.status === 'pagado') {
+      doc.setTextColor(0, 128, 0);
+      doc.text("PAGADO", 150, 22);
+    } else {
+      doc.setTextColor(200, 0, 0);
+      doc.text("PENDIENTE DE PAGO", 150, 22);
+    }
+
+    // Tabla de productos
+    const tableBody = order.items.map(item => [
+      item.desc,
+      item.qty,
+      formatCurrency(item.price),
+      formatCurrency(item.qty * item.price)
+    ]);
+
+    doc.autoTable({
+      head: [['Descripción', 'Cant.', 'Precio Unit.', 'Total']],
+      body: tableBody,
+      startY: 65,
+      theme: 'grid',
+      headStyles: { fillColor: [66, 66, 66] },
+      styles: { fontSize: 10 },
+    });
+
+    // Total
+    const finalY = doc.lastAutoTable.finalY + 10;
+    doc.setFontSize(14);
+    doc.setTextColor(0);
+    doc.text(`TOTAL A PAGAR: ${formatCurrency(order.total)}`, 140, finalY);
+
+    // Pie de página
+    doc.setFontSize(8);
+    doc.setTextColor(150);
+    doc.text("Gracias por su preferencia.", 105, 280, null, null, "center");
+
+    doc.save(`Venta_${client.name}_${order.dateString}.pdf`);
+  };
+
+  // --- VISTAS DEL DASHBOARD ---
+  
+  const DashboardView = () => {
+    const totalVentas = orders.reduce((sum, o) => sum + o.total, 0);
+    const totalPendiente = orders.filter(o => o.status === 'pendiente').reduce((sum, o) => sum + o.total, 0);
+    const ventasMes = orders.filter(o => {
+        const d = new Date(o.dateString);
+        const now = new Date();
+        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    }).length;
+
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-gray-500 text-sm">Ventas Totales (Histórico)</p>
+              <h3 className="text-2xl font-bold text-gray-800">{formatCurrency(totalVentas)}</h3>
+            </div>
+            <DollarSign className="text-blue-500 h-8 w-8" />
+          </div>
+        </div>
+        <div className="bg-white p-6 rounded-lg shadow border-l-4 border-red-500">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-gray-500 text-sm">Pendiente de Cobro</p>
+              <h3 className="text-2xl font-bold text-red-600">{formatCurrency(totalPendiente)}</h3>
+            </div>
+            <Calendar className="text-red-500 h-8 w-8" />
+          </div>
+        </div>
+        <div className="bg-white p-6 rounded-lg shadow border-l-4 border-green-500">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-gray-500 text-sm">Entregas este Mes</p>
+              <h3 className="text-2xl font-bold text-green-600">{ventasMes}</h3>
+            </div>
+            <Package className="text-green-500 h-8 w-8" />
+          </div>
+        </div>
+        
+        {/* Accesos Rápidos */}
+        <div className="md:col-span-3 mt-4">
+            <h3 className="text-lg font-semibold text-gray-700 mb-3">Accesos Rápidos</h3>
+            <div className="grid grid-cols-2 gap-4">
+                <button onClick={() => setView('new-order')} className="flex flex-col items-center justify-center p-4 bg-indigo-600 text-white rounded-lg shadow hover:bg-indigo-700 transition">
+                    <Plus className="h-6 w-6 mb-2" />
+                    <span>Nueva Venta / Entrega</span>
+                </button>
+                <button onClick={() => setView('clients')} className="flex flex-col items-center justify-center p-4 bg-gray-700 text-white rounded-lg shadow hover:bg-gray-800 transition">
+                    <Users className="h-6 w-6 mb-2" />
+                    <span>Gestionar Clientes</span>
+                </button>
+            </div>
+        </div>
+      </div>
+    );
+  };
+
+  const ClientsView = () => (
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-lg shadow">
+        <h2 className="text-xl font-bold mb-4 flex items-center text-gray-800">
+          <Users className="mr-2 h-5 w-5" /> Nuevo Cliente
+        </h2>
+        <form onSubmit={handleAddClient} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <input 
+            type="text" placeholder="Nombre Completo *" required 
+            className="p-2 border rounded focus:ring-2 focus:ring-blue-400 outline-none"
+            value={newClient.name} onChange={e => setNewClient({...newClient, name: e.target.value})}
+          />
+          <input 
+            type="tel" placeholder="Teléfono" 
+            className="p-2 border rounded focus:ring-2 focus:ring-blue-400 outline-none"
+            value={newClient.phone} onChange={e => setNewClient({...newClient, phone: e.target.value})}
+          />
+          <input 
+            type="text" placeholder="Dirección / Domicilio" 
+            className="p-2 border rounded focus:ring-2 focus:ring-blue-400 outline-none md:col-span-2"
+            value={newClient.address} onChange={e => setNewClient({...newClient, address: e.target.value})}
+          />
+          <button type="submit" className="md:col-span-2 bg-green-600 text-white py-2 rounded hover:bg-green-700 font-medium">
+            Guardar Cliente
+          </button>
+        </form>
+      </div>
+
+      <div className="bg-white rounded-lg shadow overflow-hidden">
+        <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
+            <h3 className="font-semibold text-gray-700">Directorio ({clients.length})</h3>
+        </div>
+        <div className="divide-y max-h-[500px] overflow-y-auto">
+          {clients.length === 0 ? (
+             <p className="p-8 text-center text-gray-500">No hay clientes registrados aún.</p>
+          ) : (
+            clients.map(client => (
+              <div key={client.id} className="p-4 flex items-center justify-between hover:bg-gray-50">
+                <div>
+                  <h4 className="font-bold text-gray-800">{client.name}</h4>
+                  <div className="text-sm text-gray-500 flex flex-col sm:flex-row sm:gap-4">
+                    {client.phone && <span className="flex items-center"><Phone className="h-3 w-3 mr-1"/> {client.phone}</span>}
+                    {client.address && <span className="flex items-center"><MapPin className="h-3 w-3 mr-1"/> {client.address}</span>}
+                  </div>
+                </div>
+                <button onClick={() => handleDeleteClient(client.id)} className="text-red-400 hover:text-red-600 p-2">
+                  <Trash2 className="h-5 w-5" />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const NewOrderView = () => {
+    const total = calculateTotal(currentOrder.items);
+    
+    return (
+      <div className="bg-white p-6 rounded-lg shadow max-w-4xl mx-auto">
+        <h2 className="text-xl font-bold mb-6 flex items-center text-indigo-700">
+            <FileText className="mr-2" /> Nueva Venta / Entrega
+        </h2>
+        
+        <form onSubmit={handleSaveOrder}>
+          {/* Selección de Cliente y Fecha */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 p-4 bg-gray-50 rounded">
+            <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Cliente</label>
+                <select 
+                    required
+                    className="w-full p-2 border rounded focus:ring-2 focus:ring-indigo-400 outline-none bg-white"
+                    value={currentOrder.clientId}
+                    onChange={e => setCurrentOrder({...currentOrder, clientId: e.target.value})}
+                >
+                    <option value="">-- Seleccionar Cliente --</option>
+                    {clients.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                </select>
+            </div>
+            <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Fecha</label>
+                <input 
+                    type="date" 
+                    required
+                    className="w-full p-2 border rounded focus:ring-2 focus:ring-indigo-400 outline-none"
+                    value={currentOrder.date}
+                    onChange={e => setCurrentOrder({...currentOrder, date: e.target.value})}
+                />
+            </div>
+            <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Estado del Pago</label>
+                <select 
+                    className={`w-full p-2 border rounded font-medium ${currentOrder.status === 'pagado' ? 'text-green-600' : 'text-red-600'}`}
+                    value={currentOrder.status}
+                    onChange={e => setCurrentOrder({...currentOrder, status: e.target.value})}
+                >
+                    <option value="pendiente">Pendiente (Por cobrar)</option>
+                    <option value="pagado">Pagado (Cobrado)</option>
+                </select>
+            </div>
+          </div>
+
+          {/* Lista de Productos */}
+          <div className="mb-6">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Productos / Servicios</label>
+            <div className="space-y-2">
+                {currentOrder.items.map((item, idx) => (
+                    <div key={item.id} className="flex gap-2 items-start">
+                        <input 
+                            type="text" placeholder="Descripción (ej. Garrafón 20L)" 
+                            className="flex-grow p-2 border rounded w-full"
+                            value={item.desc}
+                            onChange={e => updateOrderItem(idx, 'desc', e.target.value)}
+                        />
+                        <input 
+                            type="number" placeholder="Cant." min="1"
+                            className="w-20 p-2 border rounded text-center"
+                            value={item.qty}
+                            onChange={e => updateOrderItem(idx, 'qty', parseInt(e.target.value) || 0)}
+                        />
+                        <input 
+                            type="number" placeholder="Precio" min="0" step="0.5"
+                            className="w-24 p-2 border rounded text-right"
+                            value={item.price}
+                            onChange={e => updateOrderItem(idx, 'price', parseFloat(e.target.value) || 0)}
+                        />
+                        <button 
+                            type="button"
+                            onClick={() => removeOrderItem(idx)}
+                            className="p-2 text-red-500 hover:bg-red-50 rounded"
+                            title="Quitar"
+                        >
+                            <Trash2 className="h-5 w-5" />
+                        </button>
+                    </div>
+                ))}
+            </div>
+            <button 
+                type="button" 
+                onClick={addOrderItem}
+                className="mt-3 text-sm text-indigo-600 font-medium hover:text-indigo-800 flex items-center"
+            >
+                <Plus className="h-4 w-4 mr-1" /> Agregar otro producto
+            </button>
+          </div>
+
+          {/* Total y Acción */}
+          <div className="flex items-center justify-between border-t pt-4">
+            <div className="text-xl font-bold text-gray-800">
+                Total: {formatCurrency(total)}
+            </div>
+            <div className="flex gap-3">
+                <button 
+                    type="button"
+                    onClick={() => setView('dashboard')}
+                    className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded"
+                >
+                    Cancelar
+                </button>
+                <button 
+                    type="submit"
+                    className="px-6 py-2 bg-indigo-600 text-white rounded shadow hover:bg-indigo-700 font-medium flex items-center"
+                >
+                    <CheckCircle className="h-5 w-5 mr-2" /> Finalizar Venta
+                </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    );
+  };
+
+  const HistoryView = () => {
+    const [searchTerm, setSearchTerm] = useState('');
+    const [filterStatus, setFilterStatus] = useState('all');
+
+    const filteredOrders = orders.filter(o => {
+      const matchSearch = o.clientName.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchStatus = filterStatus === 'all' || o.status === filterStatus;
+      return matchSearch && matchStatus;
+    });
+
+    return (
+      <div className="space-y-4">
+        {/* Filtros */}
+        <div className="flex flex-col md:flex-row gap-4 bg-white p-4 rounded-lg shadow">
+          <div className="relative flex-grow">
+            <Search className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
+            <input 
+              type="text" placeholder="Buscar por cliente..." 
+              className="w-full pl-10 p-2 border rounded outline-none focus:ring-2 focus:ring-blue-400"
+              value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+            />
+          </div>
+          <select 
+            className="p-2 border rounded outline-none bg-white"
+            value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+          >
+            <option value="all">Todos los estados</option>
+            <option value="pendiente">Pendientes</option>
+            <option value="pagado">Pagados</option>
+          </select>
+        </div>
+
+        {/* Lista */}
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-gray-100 text-gray-600 uppercase text-xs">
+              <tr>
+                <th className="p-4 hidden md:table-cell">Fecha</th>
+                <th className="p-4">Cliente / Info</th>
+                <th className="p-4 text-right">Total</th>
+                <th className="p-4 text-center">Estado</th>
+                <th className="p-4 text-center">Acciones</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {filteredOrders.length === 0 ? (
+                <tr><td colSpan="5" className="p-8 text-center text-gray-500">No se encontraron registros.</td></tr>
+              ) : (
+                filteredOrders.map(order => (
+                  <tr key={order.id} className="hover:bg-gray-50 transition">
+                    <td className="p-4 hidden md:table-cell text-sm text-gray-600">
+                      {order.dateString}
+                    </td>
+                    <td className="p-4">
+                      <div className="font-bold text-gray-800">{order.clientName}</div>
+                      <div className="text-xs text-gray-500 md:hidden">{order.dateString}</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {order.items.length} productos ({order.items.map(i => i.desc).join(', ').slice(0, 30)}...)
+                      </div>
+                    </td>
+                    <td className="p-4 text-right font-medium">
+                      {formatCurrency(order.total)}
+                    </td>
+                    <td className="p-4 text-center">
+                      <button 
+                        onClick={() => toggleOrderStatus(order)}
+                        className={`px-3 py-1 rounded-full text-xs font-bold border ${order.status === 'pagado' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-100 text-red-700 border-red-200'}`}
+                      >
+                        {order.status === 'pagado' ? 'PAGADO' : 'PENDIENTE'}
+                      </button>
+                    </td>
+                    <td className="p-4 text-center">
+                      <div className="flex justify-center gap-2">
+                        <button onClick={() => generatePDF(order)} className="p-2 text-blue-600 hover:bg-blue-50 rounded" title="Descargar Ticket PDF">
+                            <Download className="h-5 w-5" />
+                        </button>
+                        <button onClick={() => deleteOrder(order.id)} className="p-2 text-gray-400 hover:text-red-500 rounded" title="Eliminar">
+                            <Trash2 className="h-5 w-5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  // --- RENDERIZADO PRINCIPAL ---
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+        <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
+            <h2 className="text-xl text-gray-600">Cargando sistema...</h2>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-100 font-sans text-gray-900 pb-20 md:pb-0">
+      
+      {/* Notificación Toast */}
+      {notification && (
+        <div className="fixed top-4 right-4 bg-gray-800 text-white px-6 py-3 rounded shadow-lg z-50 animate-bounce">
+          {notification}
+        </div>
+      )}
+
+      {/* Header Desktop */}
+      <header className="bg-indigo-700 text-white shadow-md hidden md:block">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex justify-between items-center">
+            <h1 className="text-2xl font-bold flex items-center">
+                <Package className="mr-2" /> Mi Distribuidora
+            </h1>
+            <div className="text-indigo-200 text-sm">
+                ID Usuario: {user?.uid?.slice(0,6)}...
+            </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-6xl mx-auto p-4">
+        {view === 'dashboard' && <DashboardView />}
+        {view === 'clients' && <ClientsView />}
+        {view === 'new-order' && <NewOrderView />}
+        {view === 'history' && <HistoryView />}
+      </main>
+
+      {/* Bottom Navigation (Mobile) & Side Nav (Desktop) concept */}
+      {/* Para simplificar en archivo único, usamos una barra inferior fija para móvil y estilo "Tab" arriba para desktop */}
+      
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t md:hidden flex justify-around p-2 z-40 safe-area-bottom">
+        <button onClick={() => setView('dashboard')} className={`flex flex-col items-center p-2 rounded ${view === 'dashboard' ? 'text-indigo-600' : 'text-gray-400'}`}>
+            <Home className="h-6 w-6" />
+            <span className="text-xs mt-1">Inicio</span>
+        </button>
+        <button onClick={() => setView('clients')} className={`flex flex-col items-center p-2 rounded ${view === 'clients' ? 'text-indigo-600' : 'text-gray-400'}`}>
+            <Users className="h-6 w-6" />
+            <span className="text-xs mt-1">Clientes</span>
+        </button>
+        <button onClick={() => setView('new-order')} className={`flex flex-col items-center p-2 rounded -mt-6 bg-indigo-600 text-white shadow-lg border-4 border-gray-100`}>
+            <Plus className="h-8 w-8" />
+        </button>
+        <button onClick={() => setView('history')} className={`flex flex-col items-center p-2 rounded ${view === 'history' ? 'text-indigo-600' : 'text-gray-400'}`}>
+            <FileText className="h-6 w-6" />
+            <span className="text-xs mt-1">Historial</span>
+        </button>
+      </nav>
+
+      {/* Navegación Desktop (Insertada visualmente debajo del header) */}
+      <div className="hidden md:flex justify-center bg-white shadow-sm mb-6 sticky top-0 z-30">
+        <button onClick={() => setView('dashboard')} className={`px-6 py-3 border-b-2 font-medium ${view === 'dashboard' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            Inicio
+        </button>
+        <button onClick={() => setView('clients')} className={`px-6 py-3 border-b-2 font-medium ${view === 'clients' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            Clientes
+        </button>
+        <button onClick={() => setView('new-order')} className={`px-6 py-3 border-b-2 font-medium ${view === 'new-order' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            Nueva Venta
+        </button>
+        <button onClick={() => setView('history')} className={`px-6 py-3 border-b-2 font-medium ${view === 'history' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+            Historial y Facturas
+        </button>
+      </div>
+
+    </div>
+  );
+}
