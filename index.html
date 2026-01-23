@@ -53,7 +53,7 @@
         import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 
         // =========================================================================
-        // CONFIGURACIÓN DE FIREBASE (Pega tus valores aquí)
+        // CONFIGURACIÓN DE FIREBASE (VALORES ACTUALIZADOS)
         // =========================================================================
         const firebaseConfig = {
             apiKey: "AIzaSyAd6KaqlpsYIKBFD1GYVfR22_G7ukbdNp0",
@@ -66,7 +66,7 @@
         };
         // =========================================================================
 
-        const isConfigured = firebaseConfig.apiKey && firebaseConfig.apiKey !== "AIzaSyAd6KaqlpsYIKBFD1GYVfR22_G7ukbdNp0";
+        const isConfigured = firebaseConfig.apiKey && firebaseConfig.apiKey !== "TU_API_KEY";
         const app = isConfigured ? initializeApp(firebaseConfig) : null;
         const auth = isConfigured ? getAuth(app) : null;
         const db = isConfigured ? getFirestore(app) : null;
@@ -74,11 +74,11 @@
 
         const { useState, useEffect, useRef } = React;
 
-        // Componente de Icono
+        // Componente de Icono compatible
         const Icon = ({ name, size = 24, className = "" }) => {
             const iconRef = useRef(null);
-            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
-            return <i data-lucide={name} style={{ width: size, height: size }} className={`inline-block align-middle ${className}`}></i>;
+            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name, size, className]);
+            return <i data-lucide={name} style={{ width: size, height: size }} className={`inline-block align-middle ${className}`} ref={iconRef}></i>;
         };
 
         // --- NAVEGACIÓN ---
@@ -135,8 +135,8 @@
 
             return (
                 <div className="p-4 space-y-6 pb-24 animate-in fade-in">
-                    <header className="flex justify-between items-center">
-                        <h2 className="text-2xl font-black text-gray-800">Usuarios del Sistema</h2>
+                    <header className="flex justify-between items-center text-gray-800">
+                        <h2 className="text-2xl font-black">Usuarios</h2>
                         {!isAdding && (
                             <button onClick={() => setIsAdding(true)} className="bg-purple-600 text-white p-2.5 rounded-2xl flex items-center font-black shadow-lg">
                                 <Icon name="plus" size={20} className="mr-1" /> Nuevo Acceso
@@ -147,19 +147,16 @@
                     {isAdding && (
                         <div className="bg-white p-7 rounded-[2.5rem] border border-purple-100 shadow-xl space-y-4 slide-in">
                             <div className="flex justify-between font-black text-purple-700">
-                                <h3>Registrar nuevo colaborador</h3>
+                                <h3>Nuevo colaborador</h3>
                                 <button onClick={() => setIsAdding(false)}><Icon name="x" /></button>
                             </div>
-                            <input placeholder="Nombre Completo" className="w-full p-4 border-2 border-gray-100 rounded-2xl font-bold focus:border-purple-300 outline-none" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
-                            <input placeholder="Nombre de Usuario (Login)" className="w-full p-4 border-2 border-gray-100 rounded-2xl font-bold focus:border-purple-300 outline-none" value={form.username} onChange={e => setForm({...form, username: e.target.value})} />
+                            <input placeholder="Nombre Completo" className="w-full p-4 border-2 border-gray-100 rounded-2xl font-bold outline-none" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
+                            <input placeholder="Usuario" className="w-full p-4 border-2 border-gray-100 rounded-2xl font-bold outline-none" value={form.username} onChange={e => setForm({...form, username: e.target.value})} />
                             <div className="grid grid-cols-2 gap-3">
-                                <div className="relative">
-                                    <Icon name="key-round" size={16} className="absolute left-4 top-5 text-gray-300" />
-                                    <input type="password" placeholder="PIN" className="w-full pl-10 p-4 border-2 border-gray-100 rounded-2xl font-black text-center tracking-widest" value={form.pin} onChange={e => setForm({...form, pin: e.target.value})} maxLength={8}/>
-                                </div>
+                                <input type="password" placeholder="PIN" className="w-full p-4 border-2 border-gray-100 rounded-2xl font-black text-center tracking-widest" value={form.pin} onChange={e => setForm({...form, pin: e.target.value})} maxLength={8}/>
                                 <select className="p-4 border-2 border-gray-100 rounded-2xl bg-white font-black text-gray-800" value={form.role} onChange={e => setForm({...form, role: e.target.value})}>
                                     <option value="vendedor">Vendedor</option>
-                                    <option value="admin">Administrador</option>
+                                    <option value="admin">Admin</option>
                                 </select>
                             </div>
                             <button onClick={save} className="w-full bg-purple-600 text-white font-black py-5 rounded-3xl shadow-lg mt-2 uppercase tracking-widest active:scale-95 transition">Habilitar Acceso</button>
@@ -179,9 +176,7 @@
                                     </div>
                                 </div>
                                 {u.id !== '1' && u.id !== '2' && (
-                                    <button onClick={() => remove(u.id)} className="text-red-300 p-2 hover:bg-red-50 rounded-xl transition">
-                                        <Icon name="trash-2" size={20} />
-                                    </button>
+                                    <button onClick={() => remove(u.id)} className="text-red-300 p-2"><Icon name="trash-2" size={20} /></button>
                                 )}
                             </div>
                         ))}
@@ -190,30 +185,139 @@
             );
         };
 
-        // --- COMPONENTE PRINCIPAL ---
+        const InventoryView = ({ products, categories, openScanner }) => {
+            const [isAdding, setIsAdding] = useState(false);
+            const [activeCategoryId, setActiveCategoryId] = useState(null);
+            const [editingId, setEditingId] = useState(null);
+            const initialForm = { barcode: '', name: '', brand: '', categoryId: '', stock: '', cost: '', price: '', costo_factura: '', costo_oferta: '', costo_regalo: '', precio_especial: '', precio_oferta: '', precio_factura: '' };
+            const [form, setForm] = useState(initialForm);
+
+            useEffect(() => { if (!activeCategoryId && categories.length > 0) setActiveCategoryId(categories[0].id); }, [categories]);
+
+            const save = async () => {
+                if (!form.name || !form.price) return alert('Nombre y Precio requeridos');
+                const pData = { ...form, cost: parseFloat(form.cost)||0, price: parseFloat(form.price)||0, stock: parseInt(form.stock)||0, categoryId: parseInt(form.categoryId)||0, costo_factura: parseFloat(form.costo_factura)||0, costo_oferta: parseFloat(form.costo_oferta)||0, costo_regalo: parseFloat(form.costo_regalo)||0, precio_especial: parseFloat(form.precio_especial)||0, precio_oferta: parseFloat(form.precio_oferta)||0, precio_factura: parseFloat(form.precio_factura)||0 };
+                if (editingId) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', editingId), pData);
+                else await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'products'), pData);
+                setIsAdding(false); setEditingId(null); setForm(initialForm);
+            };
+
+            const isStanhome = parseInt(form.categoryId) === 5;
+            const filtered = products.filter(p => parseInt(p.categoryId) === activeCategoryId);
+
+            return (
+                <div className="p-4 space-y-6 pb-24 text-gray-800 animate-in fade-in">
+                    <header className="flex justify-between items-center"><h2 className="text-2xl font-black">Inventario</h2>{!isAdding && <button onClick={() => setIsAdding(true)} className="bg-purple-600 text-white p-2.5 rounded-2xl flex items-center font-black"><Icon name="plus" size={20} className="mr-1" /> Nuevo</button>}</header>
+                    {isAdding && (
+                        <div className="bg-white p-6 rounded-[2.5rem] border border-purple-100 shadow-xl space-y-4 slide-in">
+                            <div className="flex justify-between font-black text-purple-700"><h3>{editingId ? 'Editar' : 'Registro'}</h3> <button onClick={() => setIsAdding(false)}><Icon name="x" /></button></div>
+                            <input placeholder="Nombre" className="w-full p-4 border-2 border-gray-100 rounded-2xl font-bold" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
+                            <div className="grid grid-cols-2 gap-3"><input placeholder="Marca" className="p-4 border-2 border-gray-100 rounded-2xl font-bold" value={form.brand} onChange={e => setForm({...form, brand: e.target.value})} /><select className="p-4 border-2 border-gray-100 rounded-2xl bg-white font-bold" value={form.categoryId} onChange={e => setForm({...form, categoryId: e.target.value})}><option value="">Marca...</option>{categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+                            <div className="p-4 bg-gray-50 rounded-2xl border space-y-2"><p className="text-[10px] font-black text-gray-400">COSTOS ADQUISICIÓN</p><div className="grid grid-cols-3 gap-2 text-gray-800"><input type="number" placeholder="Fac" className="p-2 border rounded-lg" value={form.costo_factura} onChange={e => setForm({...form, costo_factura: e.target.value})} /><input type="number" placeholder="Ofe" className="p-2 border rounded-lg" value={form.costo_oferta} onChange={e => setForm({...form, costo_oferta: e.target.value})} /><input type="number" placeholder="Reg" className="p-2 border rounded-lg" value={form.costo_regalo} onChange={e => setForm({...form, costo_regalo: e.target.value})} /></div></div>
+                            <div className="grid grid-cols-3 gap-3 text-[10px] font-black text-center"><div><label>P. VENTA</label><input type="number" className="w-full p-4 border-2 border-gray-100 rounded-2xl text-center" value={form.price} onChange={e => setForm({...form, price: e.target.value})} /></div><div><label>COSTO PROM</label><input type="number" className="w-full p-4 border-2 border-gray-100 rounded-2xl text-center" value={form.cost} onChange={e => setForm({...form, cost: e.target.value})} /></div><div><label>STOCK</label><input type="number" className="w-full p-4 border-2 border-gray-100 rounded-2xl text-center" value={form.stock} onChange={e => setForm({...form, stock: e.target.value})} /></div></div>
+                            {isStanhome && <div className="p-4 bg-blue-50 rounded-2xl border space-y-2 text-gray-800"><p className="text-[10px] font-black text-blue-400">PRECIOS STANHOME</p><div className="grid grid-cols-3 gap-2"><input type="number" placeholder="Esp" className="p-2 border rounded-lg" value={form.precio_especial} onChange={e => setForm({...form, precio_especial: e.target.value})} /><input type="number" placeholder="Ofe" className="p-2 border rounded-lg" value={form.precio_oferta} onChange={e => setForm({...form, precio_oferta: e.target.value})} /><input type="number" placeholder="Fac" className="p-2 border rounded-lg" value={form.precio_factura} onChange={e => setForm({...form, precio_factura: e.target.value})} /></div></div>}
+                            <button onClick={save} className="w-full bg-purple-600 text-white font-black py-5 rounded-3xl text-lg shadow-lg">Guardar Producto</button>
+                        </div>
+                    )}
+                    <div className="space-y-4">
+                        <div className="flex space-x-2 overflow-x-auto pb-4 no-scrollbar">
+                            {categories.map(cat => (
+                                <button key={cat.id} onClick={() => setActiveCategoryId(cat.id)} className={`px-6 py-3 rounded-full text-xs font-black uppercase whitespace-nowrap border-2 ${activeCategoryId === cat.id ? 'bg-purple-600 border-purple-600 text-white' : 'bg-white border-gray-100 text-gray-400'}`}>{cat.name}</button>
+                            ))}
+                        </div>
+                        <div className="space-y-2">{filtered.map(p => (
+                            <div key={p.id} className="bg-white p-5 rounded-[2rem] border border-gray-100 flex justify-between items-center shadow-sm">
+                                <div className="flex-1 min-w-0"><p className="font-black text-gray-800 text-base">{p.name}</p><p className="text-xs text-gray-400 font-bold uppercase">{p.brand}</p></div>
+                                <div className="flex space-x-2"><button onClick={() => { setForm({...p}); setEditingId(p.id); setIsAdding(true); }} className="text-purple-400 p-2.5 bg-purple-50 rounded-2xl"><Icon name="edit" size={20}/></button><button onClick={async () => { if(confirm('¿Borrar?')) await deleteDoc(doc(db,'artifacts',appId,'public','data','products',p.id)) }} className="text-red-200 p-2.5 bg-red-50 rounded-2xl"><Icon name="trash-2" size={20}/></button></div>
+                            </div>
+                        ))}</div>
+                    </div>
+                </div>
+            );
+        };
+
+        const SalesView = ({ products, cart, setCart, addToCart, customers, finalizeSale, openScanner }) => {
+            const [searchTerm, setSearchTerm] = useState('');
+            const [paidWith, setPaidWith] = useState('');
+            const [selectedCustId, setSelectedCustId] = useState('');
+            const total = cart.reduce((a, b) => a + (b.price * b.quantity), 0);
+            return (
+                <div className="p-4 space-y-6 pb-24 text-gray-800 animate-in fade-in">
+                    <h2 className="text-2xl font-black">Vender</h2>
+                    <div className="bg-white p-6 rounded-[2.5rem] shadow-xl border border-purple-50 space-y-5">
+                        <button onClick={() => openScanner(c => { const p = products.find(x => x.barcode === c); if(p) addToCart(p); else alert('Código no registrado'); })} className="w-full bg-purple-50 text-purple-600 p-6 rounded-3xl border-2 border-dashed border-purple-200 flex items-center justify-center font-black active:bg-purple-100 transition"><Icon name="camera" className="mr-2" /> ESCANEAR CÓDIGO</button>
+                        <div className="relative text-gray-800"><Icon name="search" className="absolute left-4 top-4 text-gray-400" /><input type="text" placeholder="Buscar por nombre..." className="w-full pl-12 p-4 bg-gray-50 border-2 border-transparent rounded-2xl outline-none font-bold" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} /></div>
+                        <div className="space-y-4 max-h-64 overflow-y-auto border-t border-b py-4 no-scrollbar">
+                            {cart.map(i => (
+                                <div key={i.id} className="flex flex-col bg-gray-50 p-4 rounded-3xl border border-gray-100">
+                                    <div className="flex justify-between font-black text-gray-800"><span>{i.name}</span><span>${(i.price*i.quantity).toFixed(2)}</span></div>
+                                    <div className="flex items-center justify-between mt-2"><p className="text-[10px] text-gray-400 font-black">X {i.quantity}</p><div className="flex space-x-2"><button onClick={() => setCart(cart.filter(x=>x.id!==i.id))} className="text-red-300"><Icon name="trash-2" size={16}/></button></div></div>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="flex justify-between items-center text-gray-800"><span className="text-gray-400 font-black text-[10px] uppercase">Total</span><p className="text-4xl font-black text-purple-600">${total.toFixed(2)}</p></div>
+                        <div className="space-y-4"><input type="number" placeholder="Pago con..." className="w-full p-5 bg-gray-50 rounded-3xl outline-none font-black text-2xl" value={paidWith} onChange={e => setPaidWith(e.target.value)} /><select className="w-full p-4 bg-gray-50 rounded-2xl outline-none font-bold" value={selectedCustId} onChange={e => setSelectedCustId(e.target.value)}><option value="">Venta General</option>{customers.map(c => <option key={c.id} value={c.id}>{c.firstName} {c.lastName1}</option>)}</select></div>
+                        <button disabled={cart.length === 0} onClick={() => { finalizeSale(parseFloat(paidWith)||0, 'direct', selectedCustId); setPaidWith(''); }} className="w-full bg-purple-600 text-white font-black py-6 rounded-[3rem] uppercase tracking-widest text-lg disabled:opacity-30">Finalizar</button>
+                    </div>
+                </div>
+            );
+        };
+
+        const CustomersView = ({ customers }) => {
+            const [isAdding, setIsAdding] = useState(false);
+            const [form, setForm] = useState({ firstName: '', lastName1: '', phoneCel: '', municipio: '' });
+            const save = async () => { if(!form.firstName) return; await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'customers'), { ...form, layaways: [] }); setIsAdding(false); };
+            return (
+                <div className="p-4 space-y-6 pb-24 text-gray-800">
+                    <header className="flex justify-between items-center"><h2 className="text-2xl font-black">Clientes</h2><button onClick={() => setIsAdding(true)} className="bg-purple-600 text-white p-2.5 rounded-2xl font-black shadow-lg"><Icon name="plus" size={20} /></button></header>
+                    {isAdding && <div className="bg-white p-7 rounded-[2.5rem] shadow-xl space-y-4 text-gray-800"><input placeholder="Nombre" className="w-full p-4 border rounded-2xl" value={form.firstName} onChange={e=>setForm({...form, firstName:e.target.value})} /><input placeholder="Celular" className="w-full p-4 border rounded-2xl" value={form.phoneCel} onChange={e=>setForm({...form, phoneCel:e.target.value})} /><button onClick={save} className="w-full bg-purple-600 text-white font-black py-4 rounded-3xl">Guardar</button></div>}
+                    <div className="grid gap-3">{customers.map(c => (<div key={c.id} className="bg-white p-5 rounded-[2rem] border flex justify-between items-center"><div className="flex items-center space-x-3 text-gray-800"><Icon name="user" className="text-purple-400"/><p className="font-black">{c.firstName} {c.lastName1}</p></div><button onClick={async()=>await deleteDoc(doc(db,'artifacts',appId,'public','data','customers',c.id))} className="text-red-200"><Icon name="trash-2" size={18}/></button></div>))}</div>
+                </div>
+            );
+        };
+
+        const ReportsView = ({ sales, products }) => {
+            const today = new Date().toISOString().split('T')[0];
+            const tSales = sales.filter(s => s.date === today);
+            const total = tSales.reduce((a,b)=>a+b.total, 0);
+            return (
+                <div className="p-4 space-y-6 pb-24 text-gray-800">
+                    <h2 className="text-2xl font-black text-gray-800"><Icon name="bar-chart-3" className="mr-2 text-purple-600" /> Reportes de ventas</h2>
+                    <div className="bg-purple-600 text-white p-8 rounded-[3rem] shadow-xl relative overflow-hidden text-gray-800">
+                        <Icon name="dollar-sign" size={80} className="absolute -right-4 -bottom-4 opacity-10" />
+                        <p className="text-purple-100 font-black text-xs uppercase tracking-widest">Ingresos de Hoy</p>
+                        <h3 className="text-5xl font-black mt-2 text-white">${total.toFixed(2)}</h3>
+                    </div>
+                    <div className="bg-white p-6 rounded-[2.5rem] border shadow-sm text-gray-800">
+                        <h4 className="font-black text-xs text-gray-400 uppercase mb-4">Artículos vendidos hoy</h4>
+                        <div className="space-y-3">{tSales.flatMap(s=>s.items||[]).map((i,idx)=>(<div key={idx} className="flex justify-between text-sm font-bold text-gray-800"><span>{i.name}</span><span className="text-purple-600">${i.price.toFixed(2)}</span></div>))}</div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- APP ---
         const App = () => {
             const [view, setView] = useState('login');
             const [fbUser, setFbUser] = useState(null);
             const [currentUser, setCurrentUser] = useState(null);
-            
             const [users, setUsers] = useState([]);
             const [products, setProducts] = useState([]);
             const [customers, setCustomers] = useState([]);
             const [sales, setSales] = useState([]);
             const [cart, setCart] = useState([]);
+            const [isScannerOpen, setIsScannerOpen] = useState(false);
             const [categories] = useState([{id:1, name:'Perfumería'}, {id:2, name:'Papelería'}, {id:3, name:'Dulcería'}, {id:4, name:'Novedades'}, {id:5, name:'Stanhome'}, {id:6, name:'Betterware'}, {id:7, name:'Fuller'}]);
 
-            // Autenticación
             useEffect(() => {
                 if (!isConfigured) return;
                 signInAnonymously(auth).catch(console.error);
                 return onAuthStateChanged(auth, u => { if(u) setFbUser(u); });
             }, []);
 
-            // Escuchar Datos
             useEffect(() => {
                 if (!fbUser || !db) return;
-                const unsubU = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), s => {
+                onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'users'), s => {
                     const cloud = s.docs.map(d => ({ id: d.id, ...d.data() }));
                     setUsers([
                         { id: '1', username: 'admin', pin: '1234', role: 'admin', name: 'Administrador' },
@@ -221,11 +325,38 @@
                         ...cloud
                     ]);
                 });
-                const unsubP = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'products'), s => setProducts(s.docs.map(d => ({ id: d.id, ...d.data() }))));
-                const unsubC = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'customers'), s => setCustomers(s.docs.map(d => ({ id: d.id, ...d.data() }))));
-                const unsubS = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'sales'), s => setSales(s.docs.map(d => ({ id: d.id, ...d.data() }))));
-                return () => { unsubU(); unsubP(); unsubC(); unsubS(); };
+                onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'products'), s => setProducts(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+                onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'customers'), s => setCustomers(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+                onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'sales'), s => setSales(s.docs.map(d => ({ id: d.id, ...d.data() }))));
             }, [fbUser]);
+
+            const finalizeSale = async (paid, mode, custId) => {
+                const totalVal = cart.reduce((a, b) => a + (b.price * b.quantity), 0);
+                const costT = cart.reduce((a, b) => a + (b.cost * b.quantity), 0);
+                const items = [...cart];
+                const date = new Date().toISOString().split('T')[0];
+                try {
+                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sales'), { total: totalVal, profit: totalVal - costT, date, items, timestamp: Date.now() });
+                    if (custId) {
+                        const client = customers.find(c => c.id === custId);
+                        if (client?.phoneCel) {
+                            const now = new Date();
+                            const msg = `🛍️ *TICKET VENTA* 🛍️%0A%0A*Novedades Moritas*%0A--------------------------%0A*Cliente:* ${client.firstName}%0A*Fecha:* ${now.toLocaleDateString()}%0A--------------------------%0A*TOTAL: $${totalVal.toFixed(2)} MXN*%0A¡Vuelve pronto! ✨`;
+                            window.open(`https://wa.me/52${client.phoneCel}?text=${msg}`, '_blank');
+                        }
+                    }
+                    for (const i of items) { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', i.id), { stock: Math.max(0, (i.stock||0) - i.quantity) }); }
+                    setCart([]); alert('Venta exitosa');
+                } catch (e) { alert("Error"); }
+            };
+
+            const openScanner = (cb) => {
+                setIsScannerOpen(true);
+                setTimeout(() => {
+                    const scanner = new Html5Qrcode("reader");
+                    scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, (text) => { cb(text); setIsScannerOpen(false); scanner.stop(); }, () => {}).catch(() => setIsScannerOpen(false));
+                }, 500);
+            };
 
             const handleLogin = (u, p) => {
                 const found = users.find(x => x.username.toLowerCase() === u.toLowerCase() && x.pin === p);
@@ -233,25 +364,17 @@
                 else alert('PIN o Usuario incorrecto');
             };
 
-            if (!isConfigured) return (
-                <div className="min-h-screen flex items-center justify-center p-10 text-center bg-purple-700 text-white">
-                    <div className="space-y-6 max-w-sm">
-                        <Icon name="alert-circle" size={80} />
-                        <h1 className="text-3xl font-black italic">Configuración Requerida</h1>
-                        <p className="font-bold opacity-80">Fernando, por favor pega tus credenciales de Firebase en la sección `firebaseConfig` del código para activar el sistema.</p>
-                    </div>
-                </div>
-            );
+            if (!isConfigured) return <div className="min-h-screen flex items-center justify-center p-10 text-center bg-purple-700 text-white"><h1 className="text-2xl font-black italic">Fernando, pega tus credenciales de Firebase en el código.</h1></div>;
 
             if (view === 'login') return (
-                <div className="min-h-screen bg-gradient-to-br from-purple-800 to-indigo-900 flex items-center justify-center p-6">
-                    <div className="bg-white/95 backdrop-blur-md w-full max-w-sm rounded-[3.5rem] p-12 shadow-2xl animate-in fade-in">
-                        <div className="flex justify-center mb-10"><div className="bg-purple-100 p-6 rounded-[2rem] text-purple-600"><Icon name="sparkles" size={48} /></div></div>
-                        <h1 className="text-3xl font-black text-center mb-2 tracking-tighter uppercase text-gray-800">Moritas POS</h1>
-                        <div className="space-y-4 mt-8">
+                <div className="min-h-screen bg-gradient-to-br from-purple-800 to-indigo-900 flex items-center justify-center p-6 text-gray-800">
+                    <div className="bg-white/95 backdrop-blur-md w-full max-w-sm rounded-[3.5rem] p-12 shadow-2xl animate-in fade-in text-gray-800">
+                        <div className="flex justify-center mb-10"><div className="bg-purple-100 p-6 rounded-[2rem] text-purple-600 shadow-inner"><Icon name="sparkles" size={48} /></div></div>
+                        <h1 className="text-3xl font-black text-center mb-2 tracking-tighter uppercase text-gray-800 text-gray-800 text-gray-800">Moritas POS</h1>
+                        <div className="space-y-4 mt-8 text-gray-800 text-gray-800 text-gray-800">
                             <input id="u" placeholder="Usuario" className="w-full p-5 bg-gray-50 border-2 border-transparent rounded-3xl outline-none font-black focus:border-purple-200" />
-                            <input id="p" type="password" placeholder="PIN de acceso" className="w-full p-5 bg-gray-50 border-2 border-transparent rounded-3xl outline-none text-center text-4xl font-black tracking-widest focus:border-purple-200" maxLength={8} />
-                            <button onClick={() => handleLogin(document.getElementById('u').value, document.getElementById('p').value)} className="w-full bg-purple-600 text-white font-black py-5 rounded-3xl shadow-xl hover:bg-purple-700 active:scale-95 transition-all text-lg uppercase tracking-widest mt-4">Entrar</button>
+                            <input id="p" type="password" placeholder="PIN" className="w-full p-5 bg-gray-50 border-2 border-transparent rounded-3xl outline-none text-center text-4xl font-black" maxLength={8} />
+                            <button onClick={() => handleLogin(document.getElementById('u').value, document.getElementById('p').value)} className="w-full bg-purple-600 text-white font-black py-5 rounded-3xl shadow-xl text-lg uppercase tracking-widest mt-4">Entrar</button>
                         </div>
                     </div>
                 </div>
@@ -260,25 +383,27 @@
             return (
                 <div className="min-h-screen bg-purple-50 md:flex font-sans text-gray-800">
                     <Navbar view={view} setView={setView} currentUser={currentUser} setCurrentUser={setCurrentUser} />
-                    <main className="flex-1 max-w-4xl mx-auto md:p-6 bg-purple-50/50 overflow-y-auto">
+                    <main className="flex-1 max-w-4xl mx-auto md:p-6 bg-purple-50/50 overflow-y-auto text-gray-800">
                         {view === 'dashboard' && (
-                            <div className="p-6 space-y-8 animate-in fade-in text-gray-800">
-                                <h1 className="text-4xl font-black tracking-tight">Panel Principal</h1>
-                                <div className="grid grid-cols-2 gap-5 text-gray-800">
-                                    <div className="bg-white p-7 rounded-[3rem] border-b-8 border-b-purple-600 shadow-sm"><p className="text-[10px] font-black text-gray-400 uppercase">Productos</p><p className="text-5xl font-black text-purple-600">{products.length}</p></div>
-                                    <div className="bg-white p-7 rounded-[3rem] border-b-8 border-b-indigo-500 shadow-sm"><p className="text-[10px] font-black text-gray-400 uppercase">Ventas Hoy</p><p className="text-5xl font-black text-indigo-600">{sales.filter(s => s.date === new Date().toISOString().split('T')[0]).length}</p></div>
+                            <div className="p-6 space-y-8 animate-in fade-in text-gray-800 text-gray-800 text-gray-800">
+                                <h1 className="text-4xl font-black tracking-tight text-gray-800 text-gray-800">Principal</h1>
+                                <div className="grid grid-cols-2 gap-5 text-gray-800 text-gray-800">
+                                    <div className="bg-white p-7 rounded-[3rem] border-b-8 border-b-purple-600 shadow-sm text-gray-800"><p className="text-[10px] font-black text-gray-400 uppercase">Productos</p><p className="text-5xl font-black text-purple-600">{products.length}</p></div>
+                                    <div className="bg-white p-7 rounded-[3rem] border-b-8 border-b-indigo-500 shadow-sm text-gray-800"><p className="text-[10px] font-black text-gray-400 uppercase">Ventas Hoy</p><p className="text-5xl font-black text-indigo-600">{sales.filter(s => s.date === today).length}</p></div>
                                 </div>
-                                <button onClick={() => setView('sales')} className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-12 rounded-[4rem] flex items-center justify-between shadow-2xl active:scale-95 transition">
+                                <button onClick={() => setView('sales')} className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 text-white p-12 rounded-[4rem] flex items-center justify-between shadow-2xl active:scale-95 transition text-gray-800 text-gray-800">
                                     <div className="text-left font-black leading-none uppercase text-white"><p className="text-xl opacity-80 mb-1">Nueva</p><p className="text-5xl italic">VENTA</p></div>
                                     <Icon name="barcode" size={80} className="opacity-90" />
                                 </button>
                             </div>
                         )}
                         {view === 'users_admin' && <UsersAdminView users={users} />}
-                        {/* El resto de las vistas se mantienen integradas... */}
-                        {view === 'inventory' && <InventoryView products={products} categories={categories} openScanner={() => {}} />}
+                        {view === 'inventory' && <InventoryView products={products} categories={categories} openScanner={openScanner} />}
+                        {view === 'sales' && <SalesView products={products} cart={cart} setCart={setCart} addToCart={p=>{if((p.stock||0)<=0)return alert('Sin stock');const ex=cart.find(x=>x.id===p.id);if(ex)setCart(cart.map(x=>x.id===p.id?{...x,quantity:x.quantity+1}:x));else setCart([...cart,{...p,quantity:1}]);}} customers={customers} finalizeSale={finalizeSale} openScanner={openScanner} />}
+                        {view === 'reports' && <ReportsView sales={sales} products={products} />}
                         {view === 'customers' && <CustomersView customers={customers} />}
                     </main>
+                    {isScannerOpen && <div className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-8 backdrop-blur-lg animate-in fade-in"><button onClick={() => setIsScannerOpen(false)} className="absolute top-10 right-10 text-white p-5 active:scale-90 transition"><Icon name="x" size={32} /></button><div className="w-full max-w-md aspect-square bg-white/5 rounded-[4rem] overflow-hidden border-4 border-purple-500 shadow-2xl" id="reader"></div><p className="mt-12 text-white font-black uppercase text-center tracking-widest animate-pulse">Escaneando...</p></div>}
                 </div>
             );
         };
